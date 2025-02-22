@@ -1,0 +1,99 @@
+# server.py
+import socket
+from socket import gethostname
+from socket import gethostbyname_ex
+import sys
+import time
+
+class Server:
+    def __init__(self, port):
+        self.port = port
+        self.socket = None
+        self.clientConnection = None
+        self.address = ('0.0.0.0', port)
+
+        #inial message parameters 
+        self.protocolPhase = None
+        self.messageType = None
+        self.probeNum = None
+        self.serverDelay = None
+        self.messageSize = None
+
+    def handleMeasurement(self, client_socket):
+        while True: 
+            try: 
+                message = client_socket.recv(32768)
+                parts = message.decode().split()
+            
+                if len(parts) >= 3: 
+                    payload_size = len(parts[1])
+                    probe_num = parts[2]
+                    print(f"Received Probe Num: {probe_num} for size {payload_size}\n")
+
+                if not message: 
+                    break
+                if message.decode().strip() == "t":
+                    print("Received termination message")
+                    termination = "200 OK: Closing Connection"
+                    client_socket.sendall(termination.encode())
+                    break
+              
+                client_socket.sendall(message)
+                
+            except Exception as e:
+                print(f"Error in measurement phase: {e}")
+                break
+
+    def start(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        ##socket reuse
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        self.socket.bind(self.address)
+
+        self.socket.listen(1)
+
+        hostname = socket.gethostname()
+        addresses = socket.gethostbyname_ex(hostname)[2]
+        print(f"Server is listening on port {self.port}.")
+        for ip in addresses: 
+            print(f" {ip}")
+
+        while True: 
+            print("\nWaiting for connection....")
+            clientConnection, clientAddress = self.socket.accept()
+            
+            try:
+                initialMessage = clientConnection.recv(1024)
+                print(f"Message: {initialMessage}")
+                messageParts = initialMessage.split() 
+
+                if len(messageParts) != 5:
+                    print("Invalid start message...please try again.")
+                    erroMessage = "400: Invalid Message Format"
+                    self.clientConnection.sendall(erroMessage.encode())
+                    self.clientConnection.close()
+                    continue
+            
+                self.protocolPhase = messageParts[0]
+                self.messageType = messageParts[1]
+                self.messageSize = messageParts[2]
+                self.probeNum = messageParts[3]
+                self.serverDelay = messageParts[4]
+            
+                clientConfirmationMsg = "200: OK Ready!"
+                clientConnection.sendall(clientConfirmationMsg.encode())
+
+                self.handleMeasurement(clientConnection)
+                break
+            except Exception as e: 
+                print(f"Error handling client: {e}")
+            finally:
+                clientConnection.close()
+        
+            
+if __name__ == "__main__":
+    server = Server(12345)
+    server.start()
+ 
