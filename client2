@@ -1,0 +1,156 @@
+# client.py
+import socket
+import sys
+import time
+import statistics
+
+class Client: 
+    def __init__ (self, host, port):
+        self.host = host
+        self.port = port
+        self.socket = None
+        self.confirm = 0
+        self.messageType = None
+        
+
+    PROBE_NUM = 10
+    SERVER_DELAY = 0
+    MSG_SIZE_RTT = [1,100,200,400,800,1000]
+    MSG_SIZE_TPUT = [1000,2000,4000,8000,16000,32000]
+
+    ##establish connection
+    def connectionSetup(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ##scoket reuse 
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        print(f"Connecting to {self.host} port {self.port}")
+        self.socket.connect((self.host, self.port))
+
+        allowedResponse = ["rtt", "tput"]
+    
+        while True:
+            self.messageType = input("Would you like to measure rtt or tput? ")
+            if self.messageType in allowedResponse:
+                print(f"Measuring {self.messageType}...")
+                break
+            else:
+                print("Please enter 'rtt' or 'tput")
+
+    def CSPPhase(self, messageSize):
+        message = f"s {self.messageType} {messageSize} {self.PROBE_NUM} {self.SERVER_DELAY}"
+        self.socket.sendall(message.encode())
+
+        ##recv oK!
+        serverOK = self.socket.recv(1024).decode()
+
+        if serverOK == "200: OK Ready!":
+            print("Server ready!")
+            self.confirm = 1
+        else:
+            print("404 ERROR: Invalid Connection Setup Message")
+            self.socket.close()
+            sys.exit(1)
+
+
+    def measuringPhase(self):
+        if self.confirm != 1:
+            print("Error: Setup phase not completed successfully")
+            return
+    
+        measurements = []
+
+        if self.messageType == "rtt":
+            print("Beginning rtt probing...")
+            for size in self.MSG_SIZE_RTT: 
+                for probe in range(0,10):
+                    try:
+                        tempArray = []
+                        payload = 'x' * size
+                        message = f"m {payload} {probe + 1}" 
+                        print(f"Packet: m {len(payload)} {probe + 1}")
+                        start = time.time()
+                        self.socket.sendall(message.encode())
+                        response = self.socket.recv(size + 10)
+                        print(f"Echoed message: {response.decode()}")
+                        end = time.time()
+                        rtt = (end - start) * 1000
+                        tempArray.append(rtt)
+                        measurements.append(sum(tempArray) / len(tempArray)) 
+
+                    except socket.error as e:
+                        print(f"Socket error during measurement {e}")
+                        self.socket.close()
+                        return
+                    
+            print("RTT Averages: ")
+            for i in range(0, len(self.MSG_SIZE_RTT)):
+                print(f"Size {self.MSG_SIZE_RTT[i]} Average: {measurements[i]} ms")
+
+
+            ##send 't' to server to terminate the connection
+            self.terminationPhase()
+            
+        else: 
+            print("Beginning tput probing..")
+            for size in self.MSG_SIZE_TPUT: 
+                for probe in range(0,10):
+                    try:
+                        tempArray = []
+                        payload = 'x' * size
+                        message = f"m {payload} {probe + 1}"
+                    
+                        print(f"Sending probe {probe + 1} with size {size}")
+                        start = time.time()
+                        self.socket.sendall(message.encode())
+                        response = self.socket.recv(size + 10)
+
+                        ##echo response print wayyy too many x's
+                        ##print(f"Echoed message: {response.decode()}")
+
+                        end = time.time()
+                        duration = end - start
+                        throughput =  size / duration  # Convert to Mbps
+                        measurements.append(throughput)
+
+
+                    except socket.error as e:
+                        print(f"Socket error during measurement {e}")
+                        self.socket.close()
+                        return
+                    
+            print("TPUT Averages: ")
+            for i in range(0, len(self.MSG_SIZE_TPUT)):
+                print(f"Size {self.MSG_SIZE_TPUT[i]} Average: {measurements[i]} ms")
+
+            self.terminationPhase()
+
+    def terminationPhase(self): 
+        try:
+            print("Initiating connection termination...")
+            termination = 't'
+            self.socket.sendall(termination.encode())
+        
+            # Add timeout to avoid hanging
+            self.socket.settimeout(5)
+            try:
+                response = self.socket.recv(1024).decode()
+                if response == "200 OK: Closing Connection":
+                    print("Server acknowledged termination")
+                else:
+                    print(f"Unexpected server response: {response}")
+            except socket.timeout:
+                print("No response from server, forcing close")
+        
+            self.socket.close()
+            print("Connection closed successfully")
+        except Exception as e:
+            print(f"Error during termination: {e}")
+            self.socket.close()
+
+
+if __name__ == "__main__":
+    client = Client('127.0.1.1', 12345)
+    client.connectionSetup()
+    client.CSPPhase(1)
+    client.measuringPhase()
+
